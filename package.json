@@ -1,0 +1,23 @@
+{
+  "name": "excalidraw-cf",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "$npm_execpath run build && vite preview",
+    "deploy": "$npm_execpath run build && wrangler deploy",
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
+  },
+  "dependencies": {
+    "@starfederation/datastar": "^1.0.0-beta.11",
+    "hono": "^4.12.8",
+    "roughjs": "^4.6.6"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.2.3",
+    "@cloudflare/workers-types": "^4.20260317.1",
+    "vite": "^6.3.5",
+    "vite-ssr-components": "^0.5.2",
+    "wrangler": "^4.17.0"
+  }
+}

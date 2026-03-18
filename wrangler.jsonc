@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "excalidraw-cf",
+  "compatibility_date": "2025-08-03",
+  "main": "./src/index.tsx",
+  "durable_objects": {
+    "bindings": [{ "name": "DRAWING_ROOM", "class_name": "DrawingRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DrawingRoom"] }]
+}
