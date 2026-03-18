@@ -17,6 +17,8 @@ export type {
   ArrowElement,
   FreedrawElement,
   TextElement,
+  IconElement,
+  IconType,
   Binding,
   BoundElement,
 } from '../types/elements';

@@ -7,8 +7,18 @@ import { screenToWorld } from './camera';
 
 export function hitTestAll(worldPoint: Point): ExcalidrawElement | null {
   const elements = store.getVisibleElements();
+  // Collect contained text IDs — these aren't independently selectable
+  const containedTextIds = new Set<string>();
+  for (const el of elements) {
+    if (el.boundElements) {
+      for (const b of el.boundElements) {
+        if (b.type === 'text') containedTextIds.add(b.id);
+      }
+    }
+  }
   // Test in reverse order (top to bottom)
   for (let i = elements.length - 1; i >= 0; i--) {
+    if (containedTextIds.has(elements[i].id)) continue;
     if (hitTestElement(elements[i], worldPoint)) {
       return elements[i];
     }
@@ -27,7 +37,18 @@ export function getElementsInSelectionBox(x1: number, y1: number, x2: number, y2
     height: rect.height,
   };
 
+  // Collect contained text IDs
+  const containedTextIds = new Set<string>();
+  for (const el of store.getVisibleElements()) {
+    if (el.boundElements) {
+      for (const b of el.boundElements) {
+        if (b.type === 'text') containedTextIds.add(b.id);
+      }
+    }
+  }
+
   return store.getVisibleElements().filter(el => {
+    if (containedTextIds.has(el.id)) return false;
     const bounds = getElementBounds(el);
     return (
       bounds.minX >= selBounds.minX &&

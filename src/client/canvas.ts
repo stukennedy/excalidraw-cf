@@ -36,6 +36,12 @@ export function init(): void {
     loadElements(roomId);
     // Then connect WebSocket for live sync (may fail in dev)
     wsClient.connect(roomId);
+    // Periodic auto-save as backup (catches any missed persistence)
+    setInterval(() => {
+      if (!wsClient.isConnected() && store.elements.size > 0) {
+        wsClient.flushAll();
+      }
+    }, 3000);
   }
 
   startRenderLoop();

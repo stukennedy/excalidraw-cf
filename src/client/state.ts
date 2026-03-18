@@ -5,7 +5,7 @@ const STYLE_STORAGE_KEY = 'excalidraw-cf-styles';
 const PERSISTED_STYLE_KEYS = [
   'strokeColor', 'backgroundColor', 'fillStyle',
   'strokeWidth', 'strokeStyle', 'roughness', 'opacity',
-  'fontSize', 'fontFamily',
+  'fontSize', 'fontFamily', 'glow', 'cornerRadius',
 ] as const;
 
 function loadPersistedStyles(): Partial<AppState> {

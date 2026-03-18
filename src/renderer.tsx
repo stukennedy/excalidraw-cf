@@ -8,6 +8,8 @@ export const renderer = jsxRenderer(({ children }) => {
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>Excalidraw-CF</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
         <ViteClient />
         <Link href="/src/style.css" rel="stylesheet" />
         <Script src="/src/client/canvas.ts" />

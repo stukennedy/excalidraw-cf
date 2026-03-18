@@ -16,8 +16,17 @@ export function cutSelected(): void {
   copySelected();
   history.capture();
   const selected = store.getSelectedElements();
-  const ids = selected.map(el => el.id);
+  const ids: string[] = [];
   for (const el of selected) {
+    ids.push(el.id);
+    if (el.boundElements) {
+      for (const b of el.boundElements) {
+        if (b.type === 'text') {
+          ids.push(b.id);
+          store.deleteElement(b.id);
+        }
+      }
+    }
     store.deleteElement(el.id);
   }
   wsClient.sendElementDelete(ids);
@@ -53,8 +62,18 @@ export function deleteSelected(): void {
   if (selected.length === 0) return;
 
   history.capture();
-  const ids = selected.map(el => el.id);
+  const ids: string[] = [];
   for (const el of selected) {
+    ids.push(el.id);
+    // Also delete bound text elements
+    if (el.boundElements) {
+      for (const b of el.boundElements) {
+        if (b.type === 'text') {
+          ids.push(b.id);
+          store.deleteElement(b.id);
+        }
+      }
+    }
     store.deleteElement(el.id);
   }
   wsClient.sendElementDelete(ids);

@@ -1,5 +1,5 @@
 import type { ExcalidrawElement } from './types';
-import { getElementBounds, distance, rotatePoint, type Point } from './geometry';
+import { getElementBounds, distance, rotatePoint, midpointToControlPoint, type Point } from './geometry';
 
 const HIT_THRESHOLD = 10;
 
@@ -15,6 +15,7 @@ export function hitTestElement(element: ExcalidrawElement, point: Point): boolea
   switch (element.type) {
     case 'rectangle':
     case 'text':
+    case 'icon':
       return hitTestRectangle(element, p);
     case 'ellipse':
       return hitTestEllipse(element, p);
@@ -81,6 +82,21 @@ function hitTestLinear(element: ExcalidrawElement, point: Point): boolean {
   if (!('points' in element)) return false;
   const points = (element as any).points as [number, number][];
 
+  // For single-point elements (just started drawing)
+  if (points.length === 1) {
+    return distance(point, { x: element.x + points[0][0], y: element.y + points[0][1] }) < HIT_THRESHOLD;
+  }
+
+  // 3-point arrows: midpoint is a pass-through point, convert to control point for bezier
+  if (element.type === 'arrow' && points.length === 3) {
+    const p0 = { x: element.x + points[0][0], y: element.y + points[0][1] };
+    const mid = { x: element.x + points[1][0], y: element.y + points[1][1] };
+    const p2 = { x: element.x + points[2][0], y: element.y + points[2][1] };
+    const [cpx, cpy] = midpointToControlPoint(p0.x, p0.y, mid.x, mid.y, p2.x, p2.y);
+    return distToBezier(point, p0, { x: cpx, y: cpy }, p2) < HIT_THRESHOLD;
+  }
+
+  // Lines and freedraw: test each straight segment
   for (let i = 0; i < points.length - 1; i++) {
     const ax = element.x + points[i][0];
     const ay = element.y + points[i][1];
@@ -91,12 +107,22 @@ function hitTestLinear(element: ExcalidrawElement, point: Point): boolean {
     if (d < HIT_THRESHOLD) return true;
   }
 
-  // For single-point elements (just started drawing)
-  if (points.length === 1) {
-    return distance(point, { x: element.x + points[0][0], y: element.y + points[0][1] }) < HIT_THRESHOLD;
-  }
-
   return false;
+}
+
+/** Sample a quadratic bezier curve and return minimum distance from point to curve */
+function distToBezier(p: Point, p0: Point, p1: Point, p2: Point): number {
+  let minDist = Infinity;
+  const steps = 32;
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const invT = 1 - t;
+    const x = invT * invT * p0.x + 2 * invT * t * p1.x + t * t * p2.x;
+    const y = invT * invT * p0.y + 2 * invT * t * p1.y + t * t * p2.y;
+    const d = distance(p, { x, y });
+    if (d < minDist) minDist = d;
+  }
+  return minDist;
 }
 
 function distToSegment(p: Point, a: Point, b: Point): number {

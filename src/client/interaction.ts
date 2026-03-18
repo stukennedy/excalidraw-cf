@@ -1,11 +1,11 @@
-import type { ExcalidrawElement, Tool, LinearElement, ArrowElement, FreedrawElement, TextElement } from './types';
+import type { ExcalidrawElement, Tool, LinearElement, ArrowElement, FreedrawElement, TextElement, IconElement } from './types';
 import { generateSeed } from './types';
 import { store } from './state';
 import { screenToWorld, zoomAtPoint, pan } from './camera';
 import { hitTestAll, getElementsInSelectionBox, resizeElement, hitTestHandles, type HandlePosition } from './selection';
 import { history } from './history';
-import { createElement } from '../lib/element-factory';
-import { normalizeRect, getElementBounds, type Point } from './geometry';
+import { createElement, createIcon } from '../lib/element-factory';
+import { normalizeRect, getElementBounds, snapToElementEdge, getElementEdgeAtAngle, getAngleFromElementCenter, type Point } from './geometry';
 import { wsClient } from './ws-client';
 
 type InteractionState =
@@ -77,6 +77,9 @@ function onPointerDown(e: PointerEvent, canvas: HTMLCanvasElement): void {
     case 'text':
       handleTextDown(world, canvas);
       break;
+    case 'icon':
+      handleIconDown(world);
+      break;
   }
 }
 
@@ -113,6 +116,7 @@ function onPointerMove(e: PointerEvent, canvas: HTMLCanvasElement): void {
     case 'dragging': {
       const dx = world.x - interactionState.startX;
       const dy = world.y - interactionState.startY;
+      const movedIds = new Set<string>();
       for (const [id, offset] of interactionState.elementOffsets) {
         const el = store.getElement(id);
         if (!el) continue;
@@ -123,7 +127,31 @@ function onPointerMove(e: PointerEvent, canvas: HTMLCanvasElement): void {
           version: el.version + 1,
           versionNonce: generateSeed(),
         });
+        movedIds.add(id);
+        // Move bound text elements with the container
+        if (el.boundElements) {
+          for (const bound of el.boundElements) {
+            if (bound.type === 'text') {
+              const textEl = store.getElement(bound.id);
+              if (textEl && !movedIds.has(textEl.id)) {
+                if (!interactionState.elementOffsets.has(textEl.id)) {
+                  interactionState.elementOffsets.set(textEl.id, { dx: textEl.x - world.x, dy: textEl.y - world.y });
+                }
+                const tOffset = interactionState.elementOffsets.get(textEl.id)!;
+                store.updateElement({
+                  ...textEl,
+                  x: interactionState.startX + dx + tOffset.dx,
+                  y: interactionState.startY + dy + tOffset.dy,
+                  version: textEl.version + 1,
+                  versionNonce: generateSeed(),
+                });
+              }
+            }
+          }
+        }
       }
+      // Update any arrows bound to moved elements
+      updateBoundArrows(movedIds);
       break;
     }
     case 'selecting': {
@@ -148,6 +176,8 @@ function onPointerMove(e: PointerEvent, canvas: HTMLCanvasElement): void {
       const dy = world.y - interactionState.startY;
       const updated = resizeElement(el, interactionState.handle, dx, dy, interactionState.original);
       store.updateElement(updated);
+      recenterBoundText(updated);
+      updateBoundArrows(new Set([updated.id]));
       break;
     }
     case 'rotating': {
@@ -164,22 +194,110 @@ function onPointerMove(e: PointerEvent, canvas: HTMLCanvasElement): void {
         version: el.version + 1,
         versionNonce: generateSeed(),
       });
+      updateBoundArrows(new Set([el.id]));
       break;
     }
     case 'dragging-point': {
       const el = store.getElement(interactionState.elementId) as LinearElement | ArrowElement | undefined;
       if (!el) break;
       const points = [...el.points];
-      points[interactionState.pointIndex] = [world.x - el.x, world.y - el.y];
-      store.updateElement({ ...el, points, version: el.version + 1, versionNonce: generateSeed() } as ExcalidrawElement);
+      const idx = interactionState.pointIndex;
+
+      // For arrows: handle snapping and binding on endpoint drags
+      if (el.type === 'arrow' && points.length === 3) {
+        const arrow = el as ArrowElement;
+
+        if (idx === 1) {
+          // Dragging midpoint — just move it, mark as manually bent
+          points[idx] = [world.x - el.x, world.y - el.y];
+          store.updateElement({ ...arrow, points, midpointFixed: true, version: el.version + 1, versionNonce: generateSeed() } as ExcalidrawElement);
+        } else if (idx === 0) {
+          // Dragging start endpoint — snap to nearby element
+          const snap = snapToElementEdge(world, store.getVisibleElements(), el.id);
+          let newX = arrow.x;
+          let newY = arrow.y;
+          let startBinding = arrow.startBinding;
+
+          if (snap) {
+            const snapTarget = store.getElement(snap.elementId);
+            const angle = snapTarget ? getAngleFromElementCenter(snapTarget, snap.point) : 0;
+            startBinding = { elementId: snap.elementId, focus: angle, gap: 0 };
+            // Move arrow origin to snap point, adjust other points
+            const dx = newX - snap.point.x;
+            const dy = newY - snap.point.y;
+            for (let i = 1; i < points.length; i++) {
+              points[i] = [points[i][0] + dx, points[i][1] + dy];
+            }
+            points[0] = [0, 0];
+            newX = snap.point.x;
+            newY = snap.point.y;
+          } else {
+            // No snap — unbind and move freely
+            startBinding = null;
+            const dx = newX - world.x;
+            const dy = newY - world.y;
+            for (let i = 1; i < points.length; i++) {
+              points[i] = [points[i][0] + dx, points[i][1] + dy];
+            }
+            points[0] = [0, 0];
+            newX = world.x;
+            newY = world.y;
+          }
+          if (!arrow.midpointFixed) {
+            points[1] = [(points[0][0] + points[2][0]) / 2, (points[0][1] + points[2][1]) / 2];
+          }
+          store.updateElement({ ...arrow, x: newX, y: newY, points, startBinding, version: el.version + 1, versionNonce: generateSeed() } as ExcalidrawElement);
+        } else {
+          // Dragging end endpoint (idx === 2) — snap to nearby element
+          const snap = snapToElementEdge(world, store.getVisibleElements(), el.id);
+          let endBinding = arrow.endBinding;
+
+          if (snap) {
+            const snapTarget = store.getElement(snap.elementId);
+            const angle = snapTarget ? getAngleFromElementCenter(snapTarget, snap.point) : 0;
+            endBinding = { elementId: snap.elementId, focus: angle, gap: 0 };
+            points[idx] = [snap.point.x - arrow.x, snap.point.y - arrow.y];
+          } else {
+            endBinding = null;
+            points[idx] = [world.x - arrow.x, world.y - arrow.y];
+          }
+          if (!arrow.midpointFixed) {
+            points[1] = [(points[0][0] + points[2][0]) / 2, (points[0][1] + points[2][1]) / 2];
+          }
+          store.updateElement({ ...arrow, points, endBinding, version: el.version + 1, versionNonce: generateSeed() } as ExcalidrawElement);
+        }
+      } else {
+        // Lines and other linear elements — no snapping
+        points[idx] = [world.x - el.x, world.y - el.y];
+        store.updateElement({ ...el, points, version: el.version + 1, versionNonce: generateSeed() } as ExcalidrawElement);
+      }
       break;
     }
     case 'drawing-linear': {
       const el = store.getElement(interactionState.elementId) as LinearElement | ArrowElement | undefined;
       if (!el) break;
       const points = [...el.points];
-      points[points.length - 1] = [world.x - el.x, world.y - el.y];
-      store.updateElement({ ...el, points } as ExcalidrawElement);
+      if (el.type === 'arrow' && points.length === 3) {
+        // Arrow: snap end to nearby element edge
+        let endWorld = world;
+        const snap = snapToElementEdge(world, store.getVisibleElements(), el.id);
+        if (snap) endWorld = snap.point;
+        const endPt: [number, number] = [endWorld.x - el.x, endWorld.y - el.y];
+        points[2] = endPt;
+        points[1] = [endPt[0] / 2, endPt[1] / 2]; // midpoint at center
+        // Store binding info with anchor angle
+        const arrow = el as ArrowElement;
+        let endBinding = null;
+        if (snap) {
+          const snapTarget = store.getElement(snap.elementId);
+          const angle = snapTarget ? getAngleFromElementCenter(snapTarget, snap.point) : 0;
+          endBinding = { elementId: snap.elementId, focus: angle, gap: 0 };
+        }
+        store.updateElement({ ...arrow, points, endBinding } as ExcalidrawElement);
+      } else {
+        points[points.length - 1] = [world.x - el.x, world.y - el.y];
+        store.updateElement({ ...el, points } as ExcalidrawElement);
+      }
       break;
     }
     case 'drawing-freedraw': {
@@ -233,13 +351,34 @@ function onPointerUp(e: PointerEvent, canvas: HTMLCanvasElement): void {
     }
     case 'dragging': {
       const selected = store.getSelectedElements();
-      if (selected.length > 0) {
-        wsClient.sendElementUpdate(selected);
+      const selectedIds = new Set(selected.map(el => el.id));
+      // Also persist bound arrows and bound text that were repositioned
+      const boundArrows = getBoundArrows(selectedIds);
+      const boundText = getBoundText(selectedIds);
+      const toPersist = [...selected, ...boundArrows, ...boundText];
+      if (toPersist.length > 0) {
+        wsClient.sendElementUpdate(toPersist);
       }
       break;
     }
-    case 'resizing':
-    case 'rotating':
+    case 'resizing': {
+      const el = store.getElement(interactionState.elementId);
+      if (el) {
+        const ids = new Set([el.id]);
+        const toSend = [el, ...getBoundText(ids), ...getBoundArrows(ids)];
+        wsClient.sendElementUpdate(toSend);
+      }
+      break;
+    }
+    case 'rotating': {
+      const el = store.getElement(interactionState.elementId);
+      if (el) {
+        const ids = new Set([el.id]);
+        const toSend = [el, ...getBoundArrows(ids)];
+        wsClient.sendElementUpdate(toSend);
+      }
+      break;
+    }
     case 'dragging-point': {
       const el = store.getElement(interactionState.elementId);
       if (el) wsClient.sendElementUpdate([el]);
@@ -274,10 +413,17 @@ function onDoubleClick(e: MouseEvent, canvas: HTMLCanvasElement): void {
 
   if (hit && hit.type === 'text') {
     startTextEditing(hit as TextElement, canvas);
+  } else if (hit && isContainerType(hit.type)) {
+    // Double-click on a container (rectangle, ellipse, diamond, icon) — edit contained text
+    startContainerTextEditing(hit, canvas);
   } else if (!hit) {
     // Double-click on empty space creates text
     handleTextDown(world, canvas);
   }
+}
+
+function isContainerType(type: string): boolean {
+  return type === 'rectangle' || type === 'ellipse' || type === 'diamond' || type === 'icon';
 }
 
 function handleSelectionDown(world: Point, shiftKey: boolean): void {
@@ -294,19 +440,22 @@ function handleSelectionDown(world: Point, shiftKey: boolean): void {
         interactionState = { type: 'dragging-point', elementId: el.id, pointIndex };
         return;
       }
-      // Check midpoint handles for inserting bend points
-      const midIndex = hitTestLinearMidpoints(linearEl, world);
-      if (midIndex !== -1) {
-        history.capture();
-        const points = [...linearEl.points];
-        const newPoint: [number, number] = [
-          (points[midIndex][0] + points[midIndex + 1][0]) / 2,
-          (points[midIndex][1] + points[midIndex + 1][1]) / 2,
-        ];
-        points.splice(midIndex + 1, 0, newPoint);
-        store.updateElement({ ...linearEl, points } as ExcalidrawElement);
-        interactionState = { type: 'dragging-point', elementId: el.id, pointIndex: midIndex + 1 };
-        return;
+      // For lines only: check midpoint handles for inserting bend points
+      // Arrows use a fixed 3-point bezier, no extra points
+      if (el.type === 'line') {
+        const midIndex = hitTestLinearMidpoints(linearEl, world);
+        if (midIndex !== -1) {
+          history.capture();
+          const points = [...linearEl.points];
+          const newPoint: [number, number] = [
+            (points[midIndex][0] + points[midIndex + 1][0]) / 2,
+            (points[midIndex][1] + points[midIndex + 1][1]) / 2,
+          ];
+          points.splice(midIndex + 1, 0, newPoint);
+          store.updateElement({ ...linearEl, points } as ExcalidrawElement);
+          interactionState = { type: 'dragging-point', elementId: el.id, pointIndex: midIndex + 1 };
+          return;
+        }
       }
     }
 
@@ -371,8 +520,18 @@ function handleEraserDown(world: Point): void {
   const hit = hitTestAll(world);
   if (hit) {
     history.capture();
+    const ids = [hit.id];
+    // Also delete bound text
+    if (hit.boundElements) {
+      for (const b of hit.boundElements) {
+        if (b.type === 'text') {
+          ids.push(b.id);
+          store.deleteElement(b.id);
+        }
+      }
+    }
     store.deleteElement(hit.id);
-    wsClient.sendElementDelete([hit.id]);
+    wsClient.sendElementDelete(ids);
   }
 }
 
@@ -386,9 +545,30 @@ function handleShapeDown(tool: 'rectangle' | 'ellipse' | 'diamond', world: Point
 
 function handleLinearDown(tool: 'line' | 'arrow', world: Point): void {
   history.capture();
-  const element = createElement(tool, world.x, world.y, store.appState);
-  const points: [number, number][] = [[0, 0], [0, 0]];
-  store.updateElement({ ...element, points } as ExcalidrawElement);
+  let startPos = world;
+  let startBinding = null;
+
+  // For arrows, snap start to nearby element
+  if (tool === 'arrow') {
+    const snap = snapToElementEdge(world, store.getVisibleElements());
+    if (snap) {
+      startPos = snap.point;
+      const target = store.getElement(snap.elementId);
+      const angle = target ? getAngleFromElementCenter(target, snap.point) : 0;
+      startBinding = { elementId: snap.elementId, focus: angle, gap: 0 };
+    }
+  }
+
+  const element = createElement(tool, startPos.x, startPos.y, store.appState);
+  const points: [number, number][] = tool === 'arrow'
+    ? [[0, 0], [0, 0], [0, 0]]
+    : [[0, 0], [0, 0]];
+
+  if (tool === 'arrow') {
+    store.updateElement({ ...element, points, startBinding } as ExcalidrawElement);
+  } else {
+    store.updateElement({ ...element, points } as ExcalidrawElement);
+  }
   store.selectElement(element.id);
   interactionState = { type: 'drawing-linear', elementId: element.id };
 }
@@ -482,6 +662,179 @@ function startTextEditing(element: TextElement, canvas: HTMLCanvasElement): void
   });
 }
 
+function recenterBoundText(container: ExcalidrawElement): void {
+  if (!container.boundElements) return;
+  for (const bound of container.boundElements) {
+    if (bound.type === 'text') {
+      const textEl = store.getElement(bound.id) as TextElement | undefined;
+      if (textEl && textEl.text) {
+        store.updateElement({
+          ...textEl,
+          x: container.x + (container.width - textEl.width) / 2,
+          y: container.y + (container.height - textEl.height) / 2,
+          version: textEl.version + 1,
+          versionNonce: generateSeed(),
+        });
+      }
+    }
+  }
+}
+
+function startContainerTextEditing(container: ExcalidrawElement, canvas: HTMLCanvasElement): void {
+  // Find existing bound text element, or create a new one
+  let textEl: TextElement | null = null;
+
+  if (container.boundElements) {
+    for (const bound of container.boundElements) {
+      if (bound.type === 'text') {
+        const el = store.getElement(bound.id);
+        if (el && el.type === 'text') {
+          textEl = el as TextElement;
+          break;
+        }
+      }
+    }
+  }
+
+  if (!textEl) {
+    // Create a new text element bound to this container
+    const newText = createElement('text', container.x, container.y, store.appState) as TextElement;
+    textEl = {
+      ...newText,
+      containerId: container.id,
+      textAlign: 'center',
+      verticalAlign: 'middle',
+      text: '',
+      width: container.width,
+      height: container.height,
+    } as TextElement;
+    store.updateElement(textEl);
+
+    // Add to container's boundElements
+    const boundElements = container.boundElements ? [...container.boundElements] : [];
+    boundElements.push({ id: textEl.id, type: 'text' });
+    store.updateElement({
+      ...container,
+      boundElements,
+      version: container.version + 1,
+      versionNonce: generateSeed(),
+    });
+  }
+
+  store.selectElement(container.id);
+  store.setAppState({ editingElement: textEl.id });
+
+  const textarea = document.createElement('textarea');
+  textarea.id = 'text-editor';
+  textarea.value = textEl.text;
+
+  const { zoom, scrollX, scrollY } = store.appState;
+  const rect = canvas.getBoundingClientRect();
+
+  // Position textarea centered over the container
+  const containerScreenX = container.x * zoom + scrollX + rect.left;
+  const containerScreenY = container.y * zoom + scrollY + rect.top;
+  const containerScreenW = container.width * zoom;
+  const containerScreenH = container.height * zoom;
+  const padding = 8;
+
+  const fontFamily = textEl.fontFamily === 'Virgil' ? '"DM Sans", sans-serif'
+    : textEl.fontFamily === 'Cascadia' ? '"JetBrains Mono", monospace'
+    : '"DM Sans", Helvetica, Arial, sans-serif';
+
+  // Calculate vertical padding to center text inside the container
+  const scaledFontSize = textEl.fontSize * zoom;
+  const existingLines = textEl.text ? textEl.text.split('\n').length : 1;
+  const textBlockHeight = existingLines * scaledFontSize * textEl.lineHeight;
+  const verticalPad = Math.max(padding, (containerScreenH - textBlockHeight) / 2);
+
+  textarea.style.cssText = `
+    position: fixed;
+    background: transparent;
+    border: none;
+    outline: none;
+    resize: none;
+    overflow: hidden;
+    font-size: ${scaledFontSize}px;
+    font-family: ${fontFamily};
+    color: ${textEl.strokeColor};
+    line-height: ${textEl.lineHeight};
+    text-align: center;
+    left: ${containerScreenX + padding}px;
+    top: ${containerScreenY + verticalPad}px;
+    width: ${containerScreenW - padding * 2}px;
+    height: ${containerScreenH - verticalPad * 2}px;
+    padding: 0;
+    margin: 0;
+    box-sizing: border-box;
+    z-index: 1000;
+  `;
+
+  document.body.appendChild(textarea);
+  textarea.focus();
+
+  const capturedTextEl = textEl;
+  const finishEditing = () => {
+    const text = textarea.value;
+    const latestContainer = store.getElement(container.id);
+
+    if (text.trim()) {
+      history.capture();
+      // Measure text
+      const ctx = canvas.getContext('2d')!;
+      ctx.font = `${capturedTextEl.fontSize}px "DM Sans", Helvetica, Arial, sans-serif`;
+      const lines = text.split('\n');
+      const textWidth = Math.max(...lines.map(l => ctx.measureText(l).width));
+      const textHeight = lines.length * capturedTextEl.fontSize * capturedTextEl.lineHeight;
+
+      // Center inside container
+      const cx = (latestContainer || container).x;
+      const cy = (latestContainer || container).y;
+      const cw = (latestContainer || container).width;
+      const ch = (latestContainer || container).height;
+
+      store.updateElement({
+        ...capturedTextEl,
+        text,
+        x: cx + (cw - textWidth) / 2,
+        y: cy + (ch - textHeight) / 2,
+        width: textWidth,
+        height: textHeight,
+        version: capturedTextEl.version + 1,
+        versionNonce: generateSeed(),
+      });
+
+      const updatedText = store.getElement(capturedTextEl.id);
+      if (updatedText) wsClient.sendElementUpdate([updatedText]);
+      if (latestContainer) wsClient.sendElementUpdate([latestContainer]);
+    } else {
+      // Empty text — remove the text element and unbind
+      store.elements.delete(capturedTextEl.id);
+      if (latestContainer) {
+        const boundElements = (latestContainer.boundElements || []).filter(b => b.id !== capturedTextEl.id);
+        store.updateElement({
+          ...latestContainer,
+          boundElements: boundElements.length > 0 ? boundElements : null,
+          version: latestContainer.version + 1,
+          versionNonce: generateSeed(),
+        });
+      }
+      store.notify();
+    }
+    store.setAppState({ editingElement: null });
+    textarea.remove();
+  };
+
+  textarea.addEventListener('blur', finishEditing);
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' || (e.key === 'Enter' && (e.metaKey || e.ctrlKey))) {
+      e.preventDefault();
+      textarea.removeEventListener('blur', finishEditing);
+      finishEditing();
+    }
+  });
+}
+
 function finishLinear(element: LinearElement | ArrowElement): void {
   // Calculate bounding box from points
   const points = element.points;
@@ -543,6 +896,95 @@ function hitTestLinearMidpoints(element: LinearElement | ArrowElement, world: Po
     if (dx * dx + dy * dy < threshold * threshold) return i;
   }
   return -1;
+}
+
+function updateBoundArrows(movedIds: Set<string>): void {
+  for (const el of store.getVisibleElements()) {
+    if (el.type !== 'arrow') continue;
+    const arrow = el as ArrowElement;
+    const startBound = arrow.startBinding && movedIds.has(arrow.startBinding.elementId);
+    const endBound = arrow.endBinding && movedIds.has(arrow.endBinding.elementId);
+    if (!startBound && !endBound) continue;
+
+    let points = [...arrow.points] as [number, number][];
+    let newX = arrow.x;
+    let newY = arrow.y;
+
+    if (startBound && arrow.startBinding) {
+      const target = store.getElement(arrow.startBinding.elementId);
+      if (target) {
+        // Use the stored anchor angle to find the edge point
+        const edgePt = getElementEdgeAtAngle(target, arrow.startBinding.focus);
+        // Move arrow origin to this edge point, adjust all other points
+        const dx = newX - edgePt.x;
+        const dy = newY - edgePt.y;
+        for (let i = 1; i < points.length; i++) {
+          points[i] = [points[i][0] + dx, points[i][1] + dy];
+        }
+        points[0] = [0, 0];
+        newX = edgePt.x;
+        newY = edgePt.y;
+      }
+    }
+
+    if (endBound && arrow.endBinding) {
+      const target = store.getElement(arrow.endBinding.elementId);
+      if (target) {
+        // Use the stored anchor angle to find the edge point
+        const edgePt = getElementEdgeAtAngle(target, arrow.endBinding.focus);
+        points[points.length - 1] = [edgePt.x - newX, edgePt.y - newY];
+      }
+    }
+
+    // Re-center midpoint only if the user hasn't manually bent the arrow
+    if (points.length === 3 && !arrow.midpointFixed) {
+      points[1] = [(points[0][0] + points[2][0]) / 2, (points[0][1] + points[2][1]) / 2];
+    }
+
+    store.updateElement({
+      ...arrow, x: newX, y: newY, points,
+      version: arrow.version + 1, versionNonce: generateSeed(),
+    } as ExcalidrawElement);
+  }
+}
+
+function getBoundArrows(elementIds: Set<string>): ExcalidrawElement[] {
+  const arrows: ExcalidrawElement[] = [];
+  for (const el of store.getVisibleElements()) {
+    if (el.type !== 'arrow') continue;
+    if (elementIds.has(el.id)) continue; // Already in the persist list
+    const arrow = el as ArrowElement;
+    if ((arrow.startBinding && elementIds.has(arrow.startBinding.elementId)) ||
+        (arrow.endBinding && elementIds.has(arrow.endBinding.elementId))) {
+      arrows.push(el);
+    }
+  }
+  return arrows;
+}
+
+function getBoundText(elementIds: Set<string>): ExcalidrawElement[] {
+  const texts: ExcalidrawElement[] = [];
+  for (const id of elementIds) {
+    const el = store.getElement(id);
+    if (el?.boundElements) {
+      for (const b of el.boundElements) {
+        if (b.type === 'text' && !elementIds.has(b.id)) {
+          const textEl = store.getElement(b.id);
+          if (textEl) texts.push(textEl);
+        }
+      }
+    }
+  }
+  return texts;
+}
+
+function handleIconDown(world: Point): void {
+  history.capture();
+  const element = createIcon(world.x - 40, world.y - 40, store.appState, store.appState.iconType);
+  store.updateElement(element);
+  store.selectElement(element.id);
+  wsClient.sendElementUpdate([element]);
+  setTool('selection');
 }
 
 function updateCursor(world: Point, canvas: HTMLCanvasElement): void {

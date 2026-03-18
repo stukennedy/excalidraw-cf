@@ -1,4 +1,4 @@
-import { Toolbar } from './toolbar';
+import { Toolbar, IconPicker } from './toolbar';
 import { PropertiesPanel } from './properties-panel';
 import { ZoomControls } from './zoom-controls';
 import { ExportDialog } from './export-dialog';
@@ -9,26 +9,41 @@ export function DrawingPage({ roomId }: { roomId?: string }) {
     <div
       id="app"
       data-signals-active-tool="'selection'"
-      data-signals-stroke-color="'#1e1e1e'"
+      data-signals-stroke-color="'#e6edf3'"
       data-signals-background-color="'transparent'"
-      data-signals-fill-style="'hachure'"
+      data-signals-fill-style="'solid'"
       data-signals-stroke-width="2"
       data-signals-stroke-style="'solid'"
-      data-signals-roughness="1"
+      data-signals-roughness="0"
       data-signals-opacity="100"
       data-signals-font-size="20"
-      data-signals-font-family="'Virgil'"
+      data-signals-font-family="'Helvetica'"
       data-signals-zoom="100"
       data-signals-selected-count="0"
       data-signals-room-id={roomId ? `'${roomId}'` : "''"}
-      data-signals-theme="'light'"
       data-signals-connected="false"
       data-signals-show-help="false"
       data-signals-show-export="false"
+      data-signals-glow="false"
+      data-signals-corner-radius="0"
+      data-signals-icon-type="'database'"
+      data-signals-has-text="false"
+      data-signals-text-align="'left'"
     >
       <canvas id="excalidraw-canvas" />
 
+      {/* Hidden bridge: syncs canvas JS state → Datastar signals via custom events */}
+      <div
+        id="ds-bridge"
+        style="display:none"
+        data-on-ds-tool-sync__window="$activeTool = evt.detail.tool"
+        data-on-ds-selection-sync__window="$selectedCount = evt.detail.count; $hasText = evt.detail.count === 0 ? false : $hasText"
+        data-on-ds-props-sync__window="$strokeColor = evt.detail.strokeColor; $backgroundColor = evt.detail.backgroundColor; $strokeWidth = evt.detail.strokeWidth; $strokeStyle = evt.detail.strokeStyle; $opacity = evt.detail.opacity; $glow = evt.detail.glow; $cornerRadius = evt.detail.cornerRadius; $hasText = evt.detail.hasText; $fontSize = evt.detail.fontSize; $fontFamily = evt.detail.fontFamily; $textAlign = evt.detail.textAlign"
+        data-on-ds-zoom-sync__window="$zoom = evt.detail.zoom"
+      />
+
       <Toolbar />
+      <IconPicker />
       <PropertiesPanel />
       <ZoomControls />
       <ExportDialog />
@@ -50,13 +65,6 @@ export function DrawingPage({ roomId }: { roomId?: string }) {
         >
           Export
         </button>
-        <button
-          class="action-btn"
-          title="Toggle theme"
-          data-on-click="$theme = $theme === 'light' ? 'dark' : 'light'; document.getElementById('app').setAttribute('data-theme', $theme)"
-        >
-          Theme
-        </button>
         {roomId && (
           <span class="connection-status" data-show="$connected" data-attr-class="$connected ? 'connection-status connected' : 'connection-status'">
             <span class="status-dot" />
@@ -68,7 +76,7 @@ export function DrawingPage({ roomId }: { roomId?: string }) {
       {/* Help indicator */}
       <div class="help-indicator">
         <button class="action-btn" data-on-click="$showHelp = !$showHelp">
-          ? Help
+          ?
         </button>
       </div>
 
@@ -89,6 +97,7 @@ export function DrawingPage({ roomId }: { roomId?: string }) {
             <div><kbd>P</kbd> Pencil</div>
             <div><kbd>T</kbd> Text</div>
             <div><kbd>E</kbd> Eraser</div>
+            <div><kbd>I</kbd> Icons</div>
             <div><kbd>H</kbd> Hand (pan)</div>
             <div><kbd>Ctrl+Z</kbd> Undo</div>
             <div><kbd>Ctrl+Shift+Z</kbd> Redo</div>
@@ -99,7 +108,6 @@ export function DrawingPage({ roomId }: { roomId?: string }) {
             <div><kbd>Ctrl+-</kbd> Zoom out</div>
             <div><kbd>Scroll</kbd> Pan</div>
             <div><kbd>Ctrl+Scroll</kbd> Zoom</div>
-            <div><kbd>Shift+Click</kbd> Multi-select</div>
           </div>
         </div>
       </div>

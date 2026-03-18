@@ -9,6 +9,8 @@ import type {
   ArrowElement,
   FreedrawElement,
   TextElement,
+  IconElement,
+  IconType,
 } from '../types/elements';
 import { generateId, generateSeed } from '../types/elements';
 
@@ -35,6 +37,8 @@ function baseElement(type: ElementType, x: number, y: number, state: AppState): 
     groupIds: [],
     boundElements: null,
     locked: false,
+    glow: state.glow,
+    cornerRadius: state.cornerRadius,
   } as ExcalidrawElement;
 }
 
@@ -62,11 +66,12 @@ export function createArrow(x: number, y: number, state: AppState): ArrowElement
   return {
     ...baseElement('arrow', x, y, state),
     type: 'arrow',
-    points: [[0, 0]],
+    points: [[0, 0], [0, 0], [0, 0]],
     startArrowhead: null,
     endArrowhead: 'arrow',
     startBinding: null,
     endBinding: null,
+    midpointFixed: false,
   } as ArrowElement;
 }
 
@@ -94,6 +99,16 @@ export function createText(x: number, y: number, state: AppState): TextElement {
   } as TextElement;
 }
 
+export function createIcon(x: number, y: number, state: AppState, iconType: IconType): IconElement {
+  return {
+    ...baseElement('icon', x, y, state),
+    type: 'icon',
+    width: 80,
+    height: 80,
+    iconType,
+  } as IconElement;
+}
+
 export function createElement(type: ElementType, x: number, y: number, state: AppState): ExcalidrawElement {
   switch (type) {
     case 'rectangle': return createRectangle(x, y, state);
@@ -103,5 +118,6 @@ export function createElement(type: ElementType, x: number, y: number, state: Ap
     case 'arrow': return createArrow(x, y, state);
     case 'freedraw': return createFreedraw(x, y, state);
     case 'text': return createText(x, y, state);
+    case 'icon': return createIcon(x, y, state, state.iconType);
   }
 }

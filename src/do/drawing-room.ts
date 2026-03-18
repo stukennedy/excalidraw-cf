@@ -168,7 +168,7 @@ export class DrawingRoom extends DurableObject {
 
       if (existing.length > 0) {
         const existingVersion = existing[0].version as number;
-        if (el.version > existingVersion) {
+        if (el.version >= existingVersion) {
           this.sql.exec(
             'UPDATE elements SET type = ?, data = ?, version = ?, is_deleted = ?, updated_at = ? WHERE id = ?',
             el.type, JSON.stringify(el), el.version, el.isDeleted ? 1 : 0, Date.now(), el.id

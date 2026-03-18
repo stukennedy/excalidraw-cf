@@ -20,6 +20,8 @@ export interface ExcalidrawElementBase {
   groupIds: string[];
   boundElements: BoundElement[] | null;
   locked: boolean;
+  glow: boolean;
+  cornerRadius: number;
 }
 
 export interface BoundElement {
@@ -55,6 +57,8 @@ export interface ArrowElement extends ExcalidrawElementBase {
   endArrowhead: Arrowhead;
   startBinding: Binding | null;
   endBinding: Binding | null;
+  /** True when the user has manually dragged the midpoint to bend the arrow */
+  midpointFixed: boolean;
 }
 
 export interface Binding {
@@ -81,6 +85,25 @@ export interface TextElement extends ExcalidrawElementBase {
   lineHeight: number;
 }
 
+export interface IconElement extends ExcalidrawElementBase {
+  type: 'icon';
+  iconType: IconType;
+}
+
+export type IconType =
+  | 'computer'
+  | 'phone'
+  | 'database'
+  | 'server'
+  | 'cloud'
+  | 'user'
+  | 'lock'
+  | 'api'
+  | 'aws'
+  | 'cloudflare'
+  | 'gcp'
+  | 'datacenter';
+
 export type FontFamily = 'Virgil' | 'Helvetica' | 'Cascadia';
 export type TextAlign = 'left' | 'center' | 'right';
 export type VerticalAlign = 'top' | 'middle' | 'bottom';
@@ -92,9 +115,10 @@ export type ExcalidrawElement =
   | LinearElement
   | ArrowElement
   | FreedrawElement
-  | TextElement;
+  | TextElement
+  | IconElement;
 
-export type ElementType = 'rectangle' | 'ellipse' | 'diamond' | 'line' | 'arrow' | 'freedraw' | 'text';
+export type ElementType = 'rectangle' | 'ellipse' | 'diamond' | 'line' | 'arrow' | 'freedraw' | 'text' | 'icon';
 
 export type Tool =
   | 'selection'
@@ -106,7 +130,8 @@ export type Tool =
   | 'freedraw'
   | 'text'
   | 'eraser'
-  | 'hand';
+  | 'hand'
+  | 'icon';
 
 export interface AppState {
   activeTool: Tool;
@@ -125,26 +150,32 @@ export interface AppState {
   selectedElementIds: Set<string>;
   editingElement: string | null;
   roomId: string | null;
+  glow: boolean;
+  cornerRadius: number;
+  iconType: IconType;
 }
 
 export function getDefaultAppState(): AppState {
   return {
     activeTool: 'selection',
-    strokeColor: '#1e1e1e',
+    strokeColor: '#e6edf3',
     backgroundColor: 'transparent',
-    fillStyle: 'hachure',
+    fillStyle: 'solid',
     strokeWidth: 2,
     strokeStyle: 'solid',
-    roughness: 1,
+    roughness: 0,
     opacity: 100,
     fontSize: 20,
-    fontFamily: 'Virgil',
+    fontFamily: 'Helvetica',
     zoom: 1,
     scrollX: 0,
     scrollY: 0,
     selectedElementIds: new Set(),
     editingElement: null,
     roomId: null,
+    glow: false,
+    cornerRadius: 0,
+    iconType: 'database',
   };
 }
 

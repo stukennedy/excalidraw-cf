@@ -127,7 +127,18 @@ class WebSocketClient {
   }
 
   sendElementDelete(elementIds: string[]): void {
-    this.send({ type: 'element-delete', elementIds });
+    if (this.isConnected()) {
+      this.send({ type: 'element-delete', elementIds });
+    } else if (this.roomId) {
+      // Fallback: mark as deleted via HTTP
+      const deletedElements = elementIds.map(id => {
+        const el = store.getElement(id);
+        return el ? { ...el, isDeleted: true } : null;
+      }).filter(Boolean);
+      if (deletedElements.length > 0) {
+        this.saveViaHttp(deletedElements as ExcalidrawElement[]);
+      }
+    }
   }
 
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -157,6 +168,19 @@ class WebSocketClient {
     if (now - this.cursorThrottle < 50) return; // Throttle to 20fps
     this.cursorThrottle = now;
     this.send({ type: 'cursor-move', userId: this.userId, x, y, username: this.username });
+  }
+
+  /** Flush all current elements to the DO via HTTP - used as periodic backup */
+  flushAll(): void {
+    if (!this.roomId) return;
+    const elements = Array.from(store.elements.values());
+    if (elements.length > 0) {
+      fetch(`/api/rooms/${this.roomId}/elements`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(elements),
+      }).catch(() => {});
+    }
   }
 
   isConnected(): boolean {

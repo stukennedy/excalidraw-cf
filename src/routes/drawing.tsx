@@ -10,10 +10,10 @@ app.get('/', (c) => {
     <div class="landing">
       <div class="landing-content">
         <h1 class="landing-title">Excalidraw-CF</h1>
-        <p class="landing-subtitle">Collaborative whiteboard powered by Cloudflare</p>
+        <p class="landing-subtitle">Professional diagramming, powered by Cloudflare</p>
         <div class="landing-actions">
           <a href="/new" class="landing-btn primary">
-            + New Drawing
+            New Drawing
           </a>
           <form class="join-form" action="/join" method="get">
             <input
@@ -23,7 +23,7 @@ app.get('/', (c) => {
               class="join-input"
             />
             <button type="submit" class="landing-btn secondary">
-              Join Room
+              Join
             </button>
           </form>
         </div>

@@ -33,6 +33,7 @@ const shortcuts: Shortcut[] = [
   { key: '8', action: () => setTool('text') },
   { key: 'e', action: () => setTool('eraser') },
   { key: '9', action: () => setTool('eraser') },
+  { key: 'i', action: () => setTool('icon') },
   { key: 'h', action: () => setTool('hand') },
   { key: '0', action: () => setTool('hand') },
 
